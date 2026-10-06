@@ -1,6 +1,14 @@
-/* Layout: one column at a paper's measure, set in Computer Modern (KaTeX_Main), with
-   figures and Lean listings allowed slightly wider than the text. */
-:root {
+/* YieldSpace in Lean: page styles.
+
+   Layout: one column at a paper's measure, set in Computer Modern (KaTeX_Main), with
+   figures and Lean listings allowed slightly wider than the text.
+
+   Every rule is scoped under `.ys`, so the page can be embedded in another site without
+   its styles leaking out. The element carrying `.ys` also carries the colour tokens.
+   Theme: follows `prefers-color-scheme`, and `data-theme="light" | "dark"` on either the
+   root element or the `.ys` element overrides it. */
+
+.ys {
   --paper: #fcfcfa;
   --ink: #1b1c1f;
   --ink-2: #55575d;
@@ -13,23 +21,23 @@
   --s4: #7c8089;
   --band: rgba(31, 79, 143, 0.07);
   --serif: "KaTeX_Main", "Latin Modern Roman", "CMU Serif", "STIX Two Text", Georgia, serif;
-  --mono: "JetBrains Mono", "Noto Sans Mono", "DejaVu Sans Mono", Menlo, monospace;
+  --mono: "YieldSpace Mono", "DejaVu Sans Mono", Menlo, Consolas, monospace;
   --measure: 40em;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root:not([data-theme="light"]) .ys:not([data-theme="light"]) {
     --paper: #17191d; --ink: #e5e3dd; --ink-2: #a3a59f; --rule: #383b42; --wash: #1f2227;
     --accent: #93b6ea; --s1: #93b6ea; --s2: #e8927a; --s3: #86c49a; --s4: #8b9099;
     --band: rgba(147, 182, 234, 0.09); color-scheme: dark;
   }
 }
-:root[data-theme="dark"] {
+:root[data-theme="dark"] .ys:not([data-theme="light"]), .ys[data-theme="dark"] {
   --paper: #17191d; --ink: #e5e3dd; --ink-2: #a3a59f; --rule: #383b42; --wash: #1f2227;
   --accent: #93b6ea; --s1: #93b6ea; --s2: #e8927a; --s3: #86c49a; --s4: #8b9099;
   --band: rgba(147, 182, 234, 0.09); color-scheme: dark;
 }
 
-body {
+.ys {
   background: var(--paper);
   color: var(--ink);
   font-family: var(--serif);
@@ -38,124 +46,124 @@ body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
-main {
+body.ys { margin: 0; }
+.ys-main {
+  box-sizing: border-box;
   max-width: var(--measure);
   margin: 0 auto;
   padding-inline: 20px;
   padding-block: 56px 96px;
 }
-p { margin: 0 0 0.9em; hyphens: auto; }
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-strong { font-weight: 700; }
-em, .i { font-style: italic; }
+.ys p { margin: 0 0 0.9em; hyphens: auto; }
+.ys a { color: var(--accent); text-decoration: none; }
+.ys a:hover { text-decoration: underline; }
+.ys a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ys strong { font-weight: 700; }
+.ys em, .ys .i { font-style: italic; }
 
 /* Title block, after the LaTeX article class */
-.title { text-align: center; margin-bottom: 2.2em; }
-.title h1 { font-size: 2.05em; font-weight: 400; line-height: 1.2; margin: 0 0 0.35em; text-wrap: balance; }
-.title .sub { font-size: 1.12em; margin: 0 0 1em; text-wrap: balance; }
-.title .meta { color: var(--ink-2); font-size: 0.92em; margin: 0; text-wrap: balance; }
-.abstract { margin: 0 auto 2.4em; max-width: 34em; font-size: 0.93em; }
-.abstract h2 { text-align: center; font-size: 1em; font-weight: 700; margin: 0 0 0.5em; }
+.ys .title { text-align: center; margin-bottom: 2.2em; }
+.ys .title h1 { font-size: 2.05em; font-weight: 400; line-height: 1.2; margin: 0 0 0.35em; text-wrap: balance; }
+.ys .title .sub { font-size: 1.12em; margin: 0 0 1em; text-wrap: balance; }
+.ys .title .meta { color: var(--ink-2); font-size: 0.92em; margin: 0; text-wrap: balance; }
+.ys .abstract { margin: 0 auto 2.4em; max-width: 34em; font-size: 0.93em; }
+.ys .abstract h2 { text-align: center; font-size: 1em; font-weight: 700; margin: 0 0 0.5em; }
 
-h2, h3 { font-weight: 700; line-height: 1.3; text-wrap: balance; }
-h2 { font-size: 1.32em; margin: 2.3em 0 0.7em; }
-h3 { font-size: 1.08em; margin: 1.9em 0 0.6em; }
-h2 .n, h3 .n { display: inline-block; min-width: 2.1em; }
-h4 { font-size: 1em; font-weight: 700; margin: 1.4em 0 0.4em; }
+.ys h1, .ys h2, .ys h3, .ys h4 { font-family: var(--serif); color: var(--ink); }
+.ys h2, .ys h3 { font-weight: 700; line-height: 1.3; text-wrap: balance; }
+.ys h2 { font-size: 1.32em; margin: 2.3em 0 0.7em; }
+.ys h3 { font-size: 1.08em; margin: 1.9em 0 0.6em; }
+.ys h2 .n, .ys h3 .n { display: inline-block; min-width: 2.1em; }
+.ys h4 { font-size: 1em; font-weight: 700; margin: 1.4em 0 0.4em; }
 
 /* Contents */
-.toc { margin: 0 0 2.5em; font-size: 0.95em; }
-.toc-h { font-size: 1.1em; margin: 0 0 0.5em; }
-.toc ol { list-style: none; padding-left: 0; margin: 0; }
-.toc ol ol { padding-left: 2.1em; }
-.toc li { margin: 0.15em 0; }
-.toc-n { display: inline-block; min-width: 2.4em; }
+.ys .toc { margin: 0 0 2.5em; font-size: 0.95em; }
+.ys .toc-h { font-size: 1.1em; margin: 0 0 0.5em; }
+.ys .toc ol { list-style: none; padding-left: 0; margin: 0; }
+.ys .toc ol ol { padding-left: 2.1em; }
+.ys .toc li { margin: 0.15em 0; }
+.ys .toc-n { display: inline-block; min-width: 2.4em; }
 
 /* Display math */
-.katex-display { margin: 1em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
-.katex { font-size: 1.05em; }
+.ys .katex-display { margin: 1em 0; overflow-x: auto; overflow-y: hidden; padding: 2px 0; }
+.ys .katex { font-size: 1.05em; }
 
 /* Theorem environments (amsthm style) */
-.thm { margin: 1.3em 0; }
-.thm > .thm-h { font-weight: 700; }
-.thm > .thm-b { font-style: italic; }
-.thm ol { margin: 0.4em 0 0; padding-left: 1.6em; font-style: italic; }
-.proof { margin: 0.6em 0 1.4em; }
-.proof .proof-h { font-style: italic; }
-.qed { float: right; padding-left: 1em; }
+.ys .thm { margin: 1.3em 0; }
+.ys .thm > .thm-h { font-weight: 700; }
+.ys .thm > .thm-b { font-style: italic; }
+.ys .thm ol { margin: 0.4em 0 0; padding-left: 1.6em; font-style: italic; }
+.ys .proof { margin: 0.6em 0 1.4em; }
+.ys .proof .proof-h { font-style: italic; }
+.ys .qed { float: right; padding-left: 1em; }
 
 /* Tables, booktabs style */
-.tablewrap { overflow-x: auto; margin: 1.3em 0 1.5em; }
-table { border-collapse: collapse; font-size: 0.9em; min-width: 100%; }
-table.narrow { min-width: 0; }
-table.narrow th, table.narrow td { padding-right: 2em; }
-caption { caption-side: top; text-align: left; font-size: 0.95em; padding-bottom: 0.5em; }
-thead tr { border-top: 1.5px solid var(--ink); border-bottom: 0.75px solid var(--ink); }
-tbody tr:last-child { border-bottom: 1.5px solid var(--ink); }
-th, td { padding: 0.32em 0.8em 0.32em 0; text-align: left; vertical-align: baseline; }
-th { font-weight: 700; }
-td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-td code, th code { font-size: 0.85em; }
+.ys .tablewrap { overflow-x: auto; margin: 1.3em 0 1.5em; }
+.ys table { border-collapse: collapse; font-size: 0.9em; min-width: 100%; }
+.ys table.narrow { min-width: 0; }
+.ys table.narrow th, .ys table.narrow td { padding-right: 2em; }
+.ys caption { caption-side: top; text-align: left; font-size: 0.95em; padding-bottom: 0.5em; }
+.ys thead tr { border-top: 1.5px solid var(--ink); border-bottom: 0.75px solid var(--ink); }
+.ys tbody tr:last-child { border-bottom: 1.5px solid var(--ink); }
+.ys th, .ys td { padding: 0.32em 0.8em 0.32em 0; text-align: left; vertical-align: baseline; border: 0; }
+.ys th { font-weight: 700; }
+.ys td.num, .ys th.num { text-align: right; font-variant-numeric: tabular-nums; }
+.ys td code, .ys th code { font-size: 0.85em; }
 
 /* Figures */
-figure { margin: 1.8em -1em 1.9em; }
-figure svg { display: block; width: 100%; height: auto; }
-figcaption { font-size: 0.88em; margin: 0.6em 1em 0; }
-figcaption .fig-n { font-weight: 700; }
-.plot text { font-family: var(--serif); font-size: 15px; fill: var(--ink-2); }
-.plot .lbl { fill: var(--ink); }
-.plot .axlabel { fill: var(--ink); font-size: 15px; }
-.plot .tick { font-size: 14px; font-variant-numeric: tabular-nums; }
-.plot .i { font-style: italic; }
-.plot .axis { stroke: var(--ink-2); stroke-width: 1; fill: none; }
-.plot .guide { stroke: var(--ink-2); stroke-width: 0.8; stroke-dasharray: 3 3; fill: none; opacity: 0.7; }
-.plot .c1, .plot .c2, .plot .c3, .plot .c4 { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.plot .c1 { stroke: var(--s1); }
-.plot .c2 { stroke: var(--s2); }
-.plot .c3 { stroke: var(--s3); }
-.plot .c4 { stroke: var(--s4); }
-.plot .thick { stroke-width: 2.6; }
-.plot .dash { stroke-dasharray: 6 5; }
-.plot .t1 { fill: var(--s1); }
-.plot .t2 { fill: var(--s2); }
-.plot .t3 { fill: var(--s3); }
-.plot .t4 { fill: var(--s4); }
-.plot .dot { fill: var(--ink); }
-.plot .dot.small { r: 3; }
-.plot .band { fill: var(--band); stroke: none; }
+.ys figure { margin: 1.8em -1em 1.9em; }
+.ys svg.plot { display: block; width: 100%; height: auto; }
+.ys figcaption { font-size: 0.88em; margin: 0.6em 1em 0; }
+.ys figcaption .fig-n { font-weight: 700; }
+.ys .plot text { font-family: var(--serif); font-size: 15px; fill: var(--ink-2); }
+.ys .plot .lbl { fill: var(--ink); }
+.ys .plot .axlabel { fill: var(--ink); font-size: 15px; }
+.ys .plot .tick { font-size: 14px; font-variant-numeric: tabular-nums; }
+.ys .plot .i { font-style: italic; }
+.ys .plot .axis { stroke: var(--ink-2); stroke-width: 1; fill: none; }
+.ys .plot .guide { stroke: var(--ink-2); stroke-width: 0.8; stroke-dasharray: 3 3; fill: none; opacity: 0.7; }
+.ys .plot .c1, .ys .plot .c2, .ys .plot .c3, .ys .plot .c4 { fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.ys .plot .c1 { stroke: var(--s1); }
+.ys .plot .c2 { stroke: var(--s2); }
+.ys .plot .c3 { stroke: var(--s3); }
+.ys .plot .c4 { stroke: var(--s4); }
+.ys .plot .thick { stroke-width: 2.6; }
+.ys .plot .dash { stroke-dasharray: 6 5; }
+.ys .plot .t1 { fill: var(--s1); }
+.ys .plot .t2 { fill: var(--s2); }
+.ys .plot .t3 { fill: var(--s3); }
+.ys .plot .t4 { fill: var(--s4); }
+.ys .plot .dot { fill: var(--ink); }
+.ys .plot .dot.small { r: 3; }
+.ys .plot .band { fill: var(--band); stroke: none; }
 
 /* Code */
-code { font-family: var(--mono); font-size: 0.8em; hyphens: none; }
-p code, li code, td code, .proof code, .thm code { background: var(--wash); padding: 0.05em 0.3em; border-radius: 3px; }
-.lean, pre.sh { margin: 1.2em -1em 1.5em; border: 1px solid var(--rule); border-radius: 4px; background: var(--wash); }
-.lean-h { display: flex; justify-content: space-between; gap: 1em; flex-wrap: wrap; font-size: 0.78em;
+.ys code { font-family: var(--mono); font-size: 0.8em; hyphens: none; color: inherit; }
+.ys p code, .ys li code, .ys td code, .ys .proof code, .ys .thm code {
+  background: var(--wash); padding: 0.05em 0.3em; border-radius: 3px; }
+.ys .lean, .ys pre.sh { margin: 1.2em -1em 1.5em; border: 1px solid var(--rule); border-radius: 4px; background: var(--wash); }
+.ys .lean-h { display: flex; justify-content: space-between; gap: 1em; flex-wrap: wrap; font-size: 0.78em;
   color: var(--ink-2); padding: 0.4em 0.9em; border-bottom: 1px solid var(--rule); letter-spacing: 0.02em; }
-.lean pre, pre.sh { margin: 0; padding: 0.8em 0.9em; overflow-x: auto; line-height: 1.5; }
-.lean pre code, pre.sh code { font-size: 14px; background: none; padding: 0; }
-pre.sh { padding: 0.8em 0.9em; }
-.l-cm { color: var(--ink-2); font-style: italic; }
-.l-kw { color: var(--s1); font-weight: 600; }
-.l-tac { color: var(--s3); }
-.l-decl { color: var(--s2); font-weight: 600; }
+.ys .lean pre, .ys pre.sh { margin: 0; padding: 0.8em 0.9em; overflow-x: auto; line-height: 1.5;
+  background: none; color: var(--ink); }
+.ys .lean pre code, .ys pre.sh code { font-size: 14px; background: none; padding: 0; }
+.ys .l-cm { color: var(--ink-2); font-style: italic; }
+.ys .l-kw { color: var(--s1); font-weight: 600; }
+.ys .l-tac { color: var(--s3); }
+.ys .l-decl { color: var(--s2); font-weight: 600; }
 
 /* Lists */
-ul, ol { padding-left: 1.4em; margin: 0 0 1em; }
-li { margin: 0.25em 0; }
-dl.defs { margin: 0 0 1em; }
-dl.defs dt { font-family: var(--mono); font-size: 0.8em; margin-top: 0.5em; }
-dl.defs dd { margin: 0.1em 0 0 1.6em; }
+.ys ul, .ys ol { padding-left: 1.4em; margin: 0 0 1em; }
+.ys li { margin: 0.25em 0; }
 
-.refs { font-size: 0.9em; padding-left: 0; list-style: none; }
-.refs li { margin: 0.4em 0; padding-left: 2.2em; text-indent: -2.2em; }
+.ys .refs { font-size: 0.9em; padding-left: 0; list-style: none; }
+.ys .refs li { margin: 0.4em 0; padding-left: 2.2em; text-indent: -2.2em; }
 
-hr { border: 0; border-top: 1px solid var(--rule); margin: 2.5em 0; }
+.ys hr { border: 0; border-top: 1px solid var(--rule); margin: 2.5em 0; }
 
 @media (max-width: 640px) {
-  body { font-size: 17.5px; }
-  main { padding-block: 32px 64px; }
-  figure, .lean, pre.sh { margin-inline: 0; }
-  .lean pre code { font-size: 12.5px; }
+  .ys { font-size: 17.5px; }
+  .ys-main { padding-block: 32px 64px; }
+  .ys figure, .ys .lean, .ys pre.sh { margin-inline: 0; }
+  .ys .lean pre code { font-size: 12.5px; }
 }
-@media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto; } }

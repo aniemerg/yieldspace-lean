@@ -1,2 +1,4 @@
 .lake/
 node_modules/
+site/build/
+__pycache__/

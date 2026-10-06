@@ -84,3 +84,48 @@ fee-free curve and both fee curves.
    share-invariant monotonicity proofs (§6, Appendices E–F), plus the `t → 1`
    constant-product limit (Appendix D). Here `y` is simply the total reserve, virtual
    reserves included.
+
+## The explainer page
+
+`site/` builds a static page that walks through the proofs for readers with college
+mathematics and little or no Lean. It is in the style of the original paper: numbered
+sections and equations, worked examples, figures, and the Lean statements next to each
+informal proof. The Lean listings are copied from `YieldSpace/*.lean` by declaration name and
+every number in the text is computed by the build, so the page cannot drift from the proofs.
+
+The built page is committed in `site/dist/`:
+
+| File | Contents |
+|---|---|
+| `index.html` | The standalone page. |
+| `fragment.html` | The page body alone (`<article class="ys">…</article>`), for embedding in another page. |
+| `style.css` | All styles. Every rule is scoped under `.ys`, so the page can sit inside another site's layout. |
+| `fonts/` | KaTeX's fonts and the code font, with their licences. |
+| `social.png` | 1200×630 preview image for link cards. |
+
+All paths are relative and nothing is loaded from other hosts, so the folder can be served
+from any URL path as it is. To embed the page in another layout, include `style.css` (with
+`fonts/` next to it) and insert `fragment.html`.
+
+The page follows the reader's `prefers-color-scheme`. Setting `data-theme="light"` or
+`data-theme="dark"` on the root element, or on the `.ys` element, overrides it.
+
+### Rebuilding
+
+Needs Python 3 and Node.js.
+
+```
+(cd site && npm install)                       # KaTeX, used to typeset the mathematics
+python3 site/build.py                          # writes site/dist/
+python3 site/build.py --base-url https://example.com/yieldspace-lean/
+                                               # also adds canonical and Open Graph URLs
+python3 site/build.py --single-file out.html   # also writes one file with fonts inlined
+```
+
+| Source | Role |
+|---|---|
+| `site/src/page.html` | The text, with `$…$` math, `{{number}}` placeholders, and `<!--FIG:…-->`, `<!--LEAN:…-->` markers. |
+| `site/src/style.css` | Styles. |
+| `site/build.py` | Computes the numbers, draws the SVG figures, renders the math with KaTeX, extracts and highlights the Lean listings. |
+| `site/fonts/` | The code font: a subset of [JuliaMono](https://github.com/cormullion/juliamono), renamed "YieldSpace Mono" as its licence (OFL 1.1) requires for modified versions. `make_mono.py` regenerates it. |
+| `site/social_card.py` | Regenerates `site/src/social.png` (needs Chrome). |

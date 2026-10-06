@@ -1,10 +1,10 @@
-<main>
 
 <header class="title">
 <h1>YieldSpace in Lean</h1>
 <p class="sub">A walk through a Lean 4 proof of eight properties of the constant power sum invariant</p>
 <p class="meta">Lean 4 and Mathlib · October 2026 · A companion to Niemerg, Robinson and Livnev,
-<a href="https://yield.is/YieldSpace.pdf">YieldSpace: An Automated Liquidity Provider for Fixed Yield Tokens</a> (2020)</p>
+<a href="https://yield.is/YieldSpace.pdf">YieldSpace: An Automated Liquidity Provider for Fixed Yield Tokens</a> (2020) ·
+<a href="https://github.com/aniemerg/yieldspace-lean">Source on GitHub</a></p>
 </header>
 
 <section class="abstract">
@@ -61,8 +61,8 @@ order, so that each proof can use the ones before it.</p>
 </tbody></table></div>
 
 <p>Every property gets the same treatment: a statement, an informal proof, and the Lean statement. The
-informal proofs are complete, and can be followed without reading any Lean. The Lean listings are copied
-from the project's source files by the script that builds this page, so they are exactly what Lean
+informal proofs are complete, and can be followed without reading any Lean. The Lean listings are copied from the project's <a href="https://github.com/aniemerg/yieldspace-lean">source files</a> by the script that
+builds this page, so they are exactly what Lean
 checked.</p>
 
 <p>Section 2 describes pools defined by an invariant, the constant power sum formula, and the paper's
@@ -740,13 +740,16 @@ fyToken reserve used in the formula, virtual reserves included.</p>
 
 <h2 id="appendix"><span class="n">A</span>Building the project</h2>
 
-<p>The project needs <code>elan</code>, Lean's toolchain manager. Mathlib's compiled files are downloaded
-rather than built locally.</p>
+<p>The source is at <a href="https://github.com/aniemerg/yieldspace-lean">github.com/aniemerg/yieldspace-lean</a>. Checking the proofs needs
+<code>elan</code>, Lean's toolchain manager; Mathlib's compiled files are downloaded rather than built
+locally. Rebuilding this page also needs Python 3 and Node.js.</p>
 
-<pre class="sh"><code>lake exe cache get             # download compiled Mathlib
+<pre class="sh"><code>git clone https://github.com/aniemerg/yieldspace-lean.git &amp;&amp; cd yieldspace-lean
+lake exe cache get             # download compiled Mathlib
 lake build                     # check every proof
 lake env lean AxiomCheck.lean  # list the axioms behind each main theorem
-python3 site/build.py          # rebuild this page from the Lean sources</code></pre>
+(cd site &amp;&amp; npm install)       # KaTeX, used to typeset the mathematics
+python3 site/build.py          # rebuild this page into site/dist/</code></pre>
 
 <div class="tablewrap"><table>
 <caption>Table 5. Source files.</caption>
@@ -770,4 +773,4 @@ Language.</em> CADE-28, 2021.</li>
 <li>[3] The mathlib Community. <em>The Lean Mathematical Library.</em> CPP 2020.</li>
 </ol>
 
-</main>
+

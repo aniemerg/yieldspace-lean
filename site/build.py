@@ -4,17 +4,23 @@
 Inputs:  site/src/page.html (prose with $...$ / $$...$$ math, {{number}} placeholders,
          <!--FIG:name-->, <!--LEAN:decl--> and <!--LEANSIG:decl--> markers),
          YieldSpace/*.lean (Lean excerpts are copied from here by declaration name).
-Outputs: site/index.html     (standalone page, all assets inlined)
-         site/artifact.html  (same content without the document skeleton)
+Output:  site/dist/  a self-contained static site with relative paths only:
+           index.html     the standalone page
+           fragment.html  the page body alone, for embedding in another page
+           style.css      all styles, scoped under the .ys class
+           fonts/         KaTeX fonts and the code font, with their licences
+           social.png     preview image for link cards
 
-Run from the repository root:  python3 site/build.py
+Run from the repository root:  python3 site/build.py [--base-url URL] [--single-file PATH]
 """
 
+import argparse
 import base64
 import html
 import json
 import math
 import re
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -472,18 +478,45 @@ def render_math(src):
     return re.sub(r"\x00MATH(\d+)\x00", lambda m: rendered[int(m.group(1))], src)
 
 
-def katex_css():
+def copy_katex(fonts_dir):
+    """Copy KaTeX's woff2 fonts and return its stylesheet pointing at them."""
     dist = SITE / "node_modules" / "katex" / "dist"
+    out = fonts_dir / "katex"
+    out.mkdir(parents=True, exist_ok=True)
+    for f in (dist / "fonts").glob("*.woff2"):
+        shutil.copy(f, out / f.name)
+    shutil.copy(SITE / "node_modules" / "katex" / "LICENSE", fonts_dir / "KATEX-LICENSE.txt")
     css = (dist / "katex.min.css").read_text()
-
-    def font(m):
-        fname = m.group(1)
-        data = base64.b64encode((dist / "fonts" / fname).read_bytes()).decode()
-        return f'url(data:font/woff2;base64,{data}) format("woff2")'
-
-    css = re.sub(r'url\(fonts/([^)]+\.woff2)\) format\("woff2"\)', font, css)
     css = re.sub(r',url\(fonts/[^)]+\.(?:woff|ttf)\) format\("(?:woff|truetype)"\)', "", css)
-    return css
+    return css.replace("url(fonts/", "url(fonts/katex/")
+
+
+MONO_FACES = (
+    ("yieldspace-mono-regular.woff2", 400, "normal"),
+    ("yieldspace-mono-italic.woff2", 400, "italic"),
+    ("yieldspace-mono-semibold.woff2", 600, "normal"),
+)
+
+
+def copy_mono(fonts_dir):
+    """Copy the code font (a renamed JuliaMono subset) and return its @font-face rules."""
+    rules = []
+    for fname, weight, style in MONO_FACES:
+        shutil.copy(SITE / "fonts" / fname, fonts_dir / fname)
+        rules.append(
+            f'@font-face{{font-family:"YieldSpace Mono";src:url(fonts/{fname}) format("woff2");'
+            f"font-weight:{weight};font-style:{style};font-display:swap}}"
+        )
+    shutil.copy(SITE / "fonts" / "OFL.txt", fonts_dir / "YIELDSPACE-MONO-OFL.txt")
+    return "\n".join(rules)
+
+
+def inline_fonts(css, base):
+    """Replace url(fonts/...) references with data URIs (for the single-file build)."""
+    def f(m):
+        data = base64.b64encode((base / m.group(1)).read_bytes()).decode()
+        return f"url(data:font/woff2;base64,{data})"
+    return re.sub(r"url\((fonts/[^)]+\.woff2)\)", f, css)
 
 
 # ---------------------------------------------------------------------------
@@ -518,9 +551,34 @@ def toc(body):
     return "".join(out)
 
 
-def main():
+TITLE = "YieldSpace in Lean"
+DESCRIPTION = ("A walk through a Lean 4 proof of eight properties of the YieldSpace constant power "
+               "sum invariant, with each proof explained for readers new to Lean.")
+
+
+def head_tags(base_url):
+    esc = html.escape
+    tags = [
+        f"<title>{TITLE}</title>",
+        f'<meta name="description" content="{esc(DESCRIPTION)}">',
+        f'<meta property="og:type" content="article">',
+        f'<meta property="og:title" content="{TITLE}">',
+        f'<meta property="og:description" content="{esc(DESCRIPTION)}">',
+        '<meta name="twitter:card" content="summary_large_image">',
+    ]
+    if base_url:
+        base = base_url.rstrip("/") + "/"
+        tags += [
+            f'<link rel="canonical" href="{esc(base)}">',
+            f'<meta property="og:url" content="{esc(base)}">',
+            f'<meta property="og:image" content="{esc(base)}social.png">',
+            f'<meta name="twitter:image" content="{esc(base)}social.png">',
+        ]
+    return "\n".join(tags)
+
+
+def render_body():
     src = (SITE / "src" / "page.html").read_text()
-    css = (SITE / "src" / "style.css").read_text()
     nums = numbers()
     src = re.sub(r"\{\{(\w+)\}\}", lambda m: nums[m.group(1)], src)
     src = render_math(src)
@@ -531,23 +589,51 @@ def main():
     src = src.replace("<!--TOC-->", toc(src))
     missing = re.findall(r"<!--(?:LEAN|LEANSIG|FIG):\S+?-->|\{\{\w+\}\}", src)
     assert not missing, missing
+    return src.strip()
 
-    head = (
-        "<title>YieldSpace in Lean</title>\n"
-        '<link rel="preconnect" href="https://fonts.googleapis.com">\n'
-        '<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>\n'
-        '<link rel="stylesheet" href="https://fonts.googleapis.com/css2?'
-        'family=JetBrains+Mono:wght@400;600&family=Noto+Sans+Mono:wght@400;600&display=swap">\n'
-        f"<style>\n{katex_css()}\n{css}\n</style>\n"
-    )
-    fragment = head + src
-    (SITE / "artifact.html").write_text(fragment)
-    (SITE / "index.html").write_text(
+
+def document(head, body):
+    return (
         '<!doctype html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
-        + head + "</head>\n<body>\n" + src + "\n</body>\n</html>\n"
+        f"{head}\n</head>\n<body class=\"ys\">\n<main class=\"ys-main\">\n{body}\n</main>\n"
+        "</body>\n</html>\n"
     )
-    print(f"wrote site/index.html ({len(fragment) // 1024} KB)")
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--out", default=str(SITE / "dist"), help="output directory (default: site/dist)")
+    ap.add_argument("--base-url", help="public URL of the page; adds canonical and Open Graph URLs")
+    ap.add_argument("--single-file", metavar="PATH",
+                    help="also write one self-contained HTML file with fonts inlined")
+    args = ap.parse_args()
+
+    out = Path(args.out)
+    if out.exists():
+        shutil.rmtree(out)
+    fonts = out / "fonts"
+    fonts.mkdir(parents=True)
+
+    body = render_body()
+    css = "\n".join([copy_mono(fonts), copy_katex(fonts), (SITE / "src" / "style.css").read_text()])
+    (out / "style.css").write_text(css)
+    shutil.copy(SITE / "src" / "social.png", out / "social.png")
+
+    head = head_tags(args.base_url) + '\n<link rel="stylesheet" href="style.css">'
+    (out / "index.html").write_text(document(head, body))
+    (out / "fragment.html").write_text(
+        "<!-- Page body only. Needs style.css (and the fonts/ folder beside it). -->\n"
+        f'<article class="ys">\n<div class="ys-main">\n{body}\n</div>\n</article>\n'
+    )
+    total = sum(f.stat().st_size for f in out.rglob("*") if f.is_file())
+    print(f"wrote {out} ({total // 1024} KB)")
+
+    if args.single_file:
+        head = head_tags(args.base_url) + f"\n<style>\n{inline_fonts(css, out)}\n</style>"
+        Path(args.single_file).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.single_file).write_text(document(head, body))
+        print(f"wrote {args.single_file}")
 
 
 if __name__ == "__main__":
