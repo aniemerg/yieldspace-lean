@@ -1,0 +1,765 @@
+<main>
+
+<header class="title">
+<h1>YieldSpace in Lean</h1>
+<p class="sub">A formal proof of eight properties of the constant power sum invariant, explained</p>
+<p class="meta">Lean 4 and Mathlib · October 2026 · A companion to Niemerg, Robinson and Livnev,
+<a href="https://yield.is/YieldSpace.pdf">YieldSpace: An Automated Liquidity Provider for Fixed Yield Tokens</a> (2020)</p>
+</header>
+
+<section class="abstract">
+<h2>Abstract</h2>
+<p>YieldSpace is a formula for pools that trade a fixed yield token (a fyToken) against the asset it
+pays out at maturity. Its invariant, $x^{1-t} + y^{1-t} = k$, includes the time to maturity $t$, and it
+makes the interest rate offered by the pool a simple function of the pool's reserves. This page walks
+through a machine-checked proof, written in Lean 4 with the Mathlib library, of eight properties of the
+pool's trades. Rates are non-negative when the pool holds at least as much fyToken as base. Every trade has exactly
+one outcome. Buying raises the price and selling lowers it. Splitting a trade into pieces changes nothing.
+A round trip loses money when there is a fee. Larger trades get worse prices. Scaling the pool scales its
+trades. Trading becomes a one-for-one exchange at maturity. Each section states one property, proves it
+informally, and shows the statement that Lean checked. Writing the statements precisely enough for a proof
+checker turned up a few places where the paper needs a qualification. Section 6 lists them.</p>
+</section>
+
+<!--TOC-->
+
+<h2 id="intro"><span class="n">1</span>Introduction</h2>
+
+<p>A fyToken is a token that can be redeemed for exactly one unit of a target asset, such as one Dai, on a
+fixed maturity date. Before that date it usually trades for less than one unit, and the discount is an
+interest rate. For example, if a fyDai that matures in one year costs $0.95$ Dai, a buyer who holds it to
+maturity earns $1/0.95 - 1 \approx 5.3\%$ over the year.</p>
+
+<p>Many token exchanges on Ethereum are automated market makers. An automated market maker is a contract
+that holds reserves of two tokens and trades with anyone. It has no order book. Instead, it accepts any
+trade that leaves its reserves satisfying a fixed equation, called the invariant, and so the invariant
+sets the price.</p>
+
+<p>YieldSpace [1] is an invariant designed for fyTokens. The paper derives it, and argues for its
+properties in the usual informal way. This page checks a set of those properties with a proof assistant:
+a program that accepts a proof only if every step follows from earlier steps, from definitions, and in the
+end from the axioms of mathematics. We use Lean 4 [2] and Mathlib [3], Lean's library of formalized
+mathematics. Mathlib already contains the tools the proofs need: real powers, derivatives, convex
+functions, the mean value theorem, and limits.</p>
+
+<p>Table 1 lists the eight properties. They are numbered in the order in which they were first written
+down, as a list of things the formalization should prove. The sections below take them in a different
+order, so that each proof can use the ones before it.</p>
+
+<div class="tablewrap"><table>
+<caption>Table 1. The eight properties, where they are proved, and the main Lean theorem for each.</caption>
+<thead><tr><th>#</th><th>Property</th><th>Section</th><th>Lean</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Rates are non-negative when $y \ge x$</td><td><a href="#t1">5.1</a></td><td><code>price_le_one</code></td></tr>
+<tr><td>2</td><td>Buying raises the price, selling lowers it</td><td><a href="#t2">5.3</a></td><td><code>price_lt_after_buyFY</code></td></tr>
+<tr><td>3</td><td>Round trips break even without a fee and lose with one</td><td><a href="#t3">5.8</a></td><td><code>Params.roundTrip_loss</code></td></tr>
+<tr><td>4</td><td>Every trade has exactly one outcome</td><td><a href="#t4">5.2</a></td><td><code>outGivenIn_spec</code></td></tr>
+<tr><td>5</td><td>Trading becomes one-for-one as $t \to 0$</td><td><a href="#t5">5.9</a></td><td><code>tendsto_feeTrades</code></td></tr>
+<tr><td>6</td><td>Splitting a trade changes nothing</td><td><a href="#t6">5.4</a></td><td><code>outGivenIn_add</code></td></tr>
+<tr><td>7</td><td>The average price lies between the marginal prices</td><td><a href="#t7">5.7</a></td><td><code>avgPrice_outGivenIn</code></td></tr>
+<tr><td>8</td><td>Scaling the pool scales its trades</td><td><a href="#t8">5.5</a></td><td><code>outGivenIn_smul</code></td></tr>
+</tbody></table></div>
+
+<p>Every property gets the same treatment: a statement, an informal proof, and the Lean statement. The
+informal proofs are complete, and can be followed without reading any Lean. The Lean listings are copied
+from the project's source files by the script that builds this page, so they are exactly what Lean
+checked.</p>
+
+<p>Section 2 describes pools defined by an invariant, the constant power sum formula, and the paper's
+fees. Section 3 explains enough Lean to read the listings. Section 4 shows how the pool is written down in
+Lean. Section 5 proves the eight properties. Section 6 lists the places where the formalization and the
+paper differ.</p>
+
+<h2 id="background"><span class="n">2</span>Background</h2>
+
+<h3 id="invariants"><span class="n">2.1</span>Pools defined by an invariant</h3>
+
+<p>A pool holds $x$ units of one token and $y$ units of another. A trader who sends $\Delta$ units of the
+second token into the pool receives some amount of the first. The pool chooses that amount so that the
+reserves after the trade satisfy the same equation as the reserves before it. That equation is the
+pool's invariant.</p>
+
+<p>The best-known invariant is the constant product $x \cdot y = k$ used by Uniswap. For example, a pool
+with $x = y = 100$ has $k = 10\,000$. To take $10$ units of $y$ out of it, a trader must raise $x$ to
+$10\,000/90 = 111.11$, so the trade costs $11.11$ units of $x$.</p>
+
+<p>Very small trades reveal the price the pool currently offers. If a trade moves the $y$ reserve by
+$dy$ and the $x$ reserve by $dx$, the price of the $y$ token, measured in units of the $x$ token, is</p>
+$$p = -\frac{dx}{dy}. \tag{1}$$
+<p>This is the marginal price. Geometrically it is the slope of the curve of possible reserves at the
+current point, with the sign changed. A real trade has a size, and its price is worse than the marginal
+price. Section 5.7 makes that precise.</p>
+
+<h3 id="powersum"><span class="n">2.2</span>The constant power sum invariant</h3>
+
+<p>In YieldSpace, $x$ is the reserve of the base token, the asset that the fyToken pays out at maturity
+(for example Dai), and $y$ is the reserve of the fyToken. The invariant is</p>
+$$x^{1-t} + y^{1-t} = k, \tag{2}$$
+<p>where $t$ is the time to maturity, scaled so that $0 < t < 1$ before maturity. In the original deployment
+$t = 1$ corresponded to four years. When $t = 0$, (2) is the constant sum $x + y = k$, which trades one
+for one. As $t$ approaches $1$, (2) approaches the constant product (paper, Appendix D). Figure 1 shows
+curves between these two.</p>
+
+<figure>
+<!--FIG:curves-->
+<figcaption><span class="fig-n">Figure 1.</span> Reserves that satisfy $x^{1-t} + y^{1-t} = k$ through the
+point $(100, 100)$. At $t = 0$ the curve is the line $x + y = 200$. At $t = 0.5$ it is
+$\sqrt{x} + \sqrt{y} = 20$, which meets both axes at $400$. As $t$ grows the curve approaches the
+constant-product hyperbola $xy = 10\,000$ (dashed), which never meets the axes.</figcaption>
+</figure>
+
+<p>To find the price, differentiate (2) along the curve:</p>
+$$(1-t)\,x^{-t}\,dx + (1-t)\,y^{-t}\,dy = 0.$$
+<p>By (1), the price of a fyToken in base is then</p>
+$$p = -\frac{dx}{dy} = \frac{y^{-t}}{x^{-t}} = \left(\frac{x}{y}\right)^{t}. \tag{3}$$
+<p>A fyToken bought at price $p$ and held to maturity turns $p$ units of base into $1$. The return over
+the time that remains is</p>
+$$\frac{1}{p} - 1 = \left(\frac{y}{x}\right)^{t} - 1. \tag{4}$$
+<p>The paper describes the rate differently. It defines $r$ by $p = (1+r)^{-t}$: $r$ is the rate per unit
+of $t$, compounded over the time $t$ that remains. Combining this with (3) gives</p>
+$$r = \frac{y}{x} - 1. \tag{5}$$
+<p>This is the property the formula was designed to have. The rate is the ratio of the reserves minus
+one, whatever the time to maturity. Both (4) and (5) are positive exactly when $y > x$.</p>
+
+<p>For example, take $x = 100$, $y = 110$ and $t = 0.5$ (two years, if $t = 1$ is four years). The price of
+a fyToken is $(100/110)^{0.5} = {{price0}}$. A buyer earns ${{rate_mat}}\%$ over the two years to maturity,
+and the paper's rate is $r = 10\%$ per four years. We use this pool, $(x, y) = (100, 110)$ with $t = 0.5$,
+as a running example. With $t = 0.5$ the exponent $1 - t$ is $1/2$ and the invariant reads
+$\sqrt{x} + \sqrt{y} = k$, so most of the numbers below can be checked by hand.</p>
+
+<h3 id="fees"><span class="n">2.3</span>Fees</h3>
+
+<p>The paper charges fees in terms of rates rather than prices (paper, §5). A trader who buys fyToken
+should receive a lower rate than the pool's marginal rate, and a trader who sells fyToken should pay a
+higher one. The paper does this by replacing $t$ with $gt$ for buys and with $t/g$ for sells, where
+$0 < g \le 1$ is a fee parameter and $g = 1$ means no fee:</p>
+$$\begin{aligned} x^{1-gt} + y^{1-gt} &= k &&\text{(buying fyToken)},\\ x^{1-t/g} + y^{1-t/g} &= k &&\text{(selling fyToken)}. \end{aligned} \tag{6}$$
+<p>On the buying curve the marginal price is $(x/y)^{gt}$. When $x < y$, the base $x/y$ is less than $1$,
+so the smaller exponent $gt$ gives a higher price than $t$ does, as a fee should. In the paper's example,
+$x = 100$, $y = 110$ and $g = 0.95$, buyers receive a marginal rate of
+$(110/100)^{0.95} - 1 \approx {{fee_buy_rate}}\%$ instead of $10\%$, and sellers pay
+$(110/100)^{1/0.95} - 1 \approx {{fee_sell_rate}}\%$. When $x > y$ the comparison reverses, and the fee
+favors the trader. Section 5.8 comes back to this.</p>
+
+<p>The selling exponent $1 - t/g$ must stay positive, so with a fee we also need $t < g$ (paper,
+footnote 4).</p>
+
+<h2 id="lean"><span class="n">3</span>Enough Lean to read this page</h2>
+
+<p>Lean is a programming language in which statements and proofs are both written as code. A Lean file
+contains definitions and theorems, and Lean accepts a theorem only after checking its proof. Here is the
+first theorem of the project:</p>
+
+<!--LEAN:price_le_one-->
+
+<p>It reads as follows.</p>
+<ul>
+<li><code>theorem price_le_one</code> gives the result a name, so that other proofs can use it.</li>
+<li><code>{t x y : ℝ}</code> introduces three real numbers. The curly braces make them implicit: a proof
+that uses this theorem does not pass them, because Lean can work them out from the hypotheses.</li>
+<li><code>(ht : 0 ≤ t)</code>, <code>(hx : 0 &lt; x)</code> and <code>(hxy : x ≤ y)</code> are
+hypotheses. Each has a name so that the proof can refer to it.</li>
+<li>After the last colon comes the conclusion, <code>price t x y ≤ 1</code>.</li>
+<li>After <code>:=</code> comes the proof. This one is a single expression. It applies Mathlib's lemma
+<code>rpow_le_one</code>, which says that $b^e \le 1$ whenever $0 \le b \le 1$ and $0 \le e$, to proofs of
+the three facts that lemma needs. <code>div_nonneg</code> proves $0 \le x/y$, and
+<code>div_le_one</code> turns $x \le y$ into $x/y \le 1$.</li>
+</ul>
+
+<p>Longer proofs are written as a sequence of tactics after the word <code>by</code>. Each tactic
+transforms the goal, the statement that remains to be proved, until nothing is left. The proofs on this
+page mostly use the tactics in Table 2.</p>
+
+<div class="tablewrap"><table>
+<caption>Table 2. Tactics used in the listings.</caption>
+<thead><tr><th>Tactic</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td><code>unfold f</code></td><td>Replaces <code>f</code> by its definition.</td></tr>
+<tr><td><code>rw [h]</code></td><td>Rewrites the goal with an equation <code>h : a = b</code>, replacing <code>a</code> by <code>b</code>.</td></tr>
+<tr><td><code>have h : P := …</code></td><td>Proves an intermediate fact <code>P</code> and names it <code>h</code>.</td></tr>
+<tr><td><code>linarith</code>, <code>nlinarith</code></td><td>Close the goal by linear (or simple nonlinear) arithmetic on the hypotheses.</td></tr>
+<tr><td><code>exact e</code></td><td>Closes the goal with a term <code>e</code> that proves it.</td></tr>
+<tr><td><code>simp</code>, <code>field_simp</code>, <code>ring</code></td><td>Simplify, clear denominators, or prove an identity of commutative rings.</td></tr>
+<tr><td><code>obtain ⟨a, b⟩ := h</code></td><td>Splits a hypothesis of the form “$A$ and $B$” or “there exists” into its parts.</td></tr>
+<tr><td><code>calc</code></td><td>Proves a chain of equalities and inequalities one link at a time.</td></tr>
+</tbody></table></div>
+
+<p>Two details of Mathlib matter for this project.</p>
+
+<p><strong>Real powers.</strong> In Lean, <code>x ^ a</code> with a real exponent $a$ is Mathlib's function
+<code>Real.rpow</code>. It is defined for every real $x$. For negative $x$, Mathlib sets
+$x^a = e^{a \log x} \cos(a \pi)$, where $\log x$ means $\log |x|$. This choice is convenient for the
+library and has no meaning for reserves. So every statement on this page that takes a power carries
+hypotheses that keep the base non-negative, either directly or through a condition such as
+$k - z^a \ge 0$.</p>
+
+<p><strong>Checking for gaps.</strong> Lean lets a proof be left unfinished with the keyword
+<code>sorry</code>, and then accepts the statement anyway. The command <code>#print axioms</code> lists
+everything a theorem depends on in the end. For each of the project's main theorems the answer is
+<code>[propext, Classical.choice, Quot.sound]</code>, the three standard axioms that all of Mathlib uses.
+An unfinished proof anywhere in the chain would add <code>sorryAx</code> to that list. There are none.</p>
+
+<h2 id="model"><span class="n">4</span>The model in Lean</h2>
+
+<h3 id="exponent"><span class="n">4.1</span>One exponent for every curve</h3>
+
+<p>The fee-free curve and the two fee curves in (6) have the same form, $x^a + y^a = k$, with</p>
+$$a = 1 - \tau, \qquad \tau \in \{\, t,\ gt,\ t/g \,\}.$$
+<p>In every case $0 < \tau < 1$, so $0 < a < 1$. The project therefore proves almost every result once,
+for an arbitrary exponent $a$ in $(0, 1)$, and then applies it to each curve. The invariant and its
+solution for one reserve are:</p>
+
+<!--LEAN:inv,solve-->
+
+<p><code>solve a k z</code> is the reserve $r$ that satisfies $r^a + z^a = k$, namely</p>
+$$r = \left(k - z^a\right)^{1/a}. \tag{7}$$
+<p>Lean writes $1/a$ as <code>a⁻¹</code>. The formula only makes sense when $k - z^a \ge 0$, and the lemmas
+about <code>solve</code> assume this. The two basic lemmas say that <code>solve</code> does solve the
+invariant, and that it is the only non-negative solution:</p>
+
+<!--LEAN:solve_rpow,eq_solve-->
+
+<p>The proof of <code>eq_solve</code> is a single chain of rewrites. If $r^a + z^a = k$ then
+$k - z^a = r^a$, and $(r^a)^{1/a} = r$ when $r \ge 0$, which is Mathlib's <code>rpow_rpow_inv</code>.</p>
+
+<h3 id="trades"><span class="n">4.2</span>Trades</h3>
+
+<p>A trader can specify a trade in two ways: by the amount sent in, or by the amount taken out. We call
+these trades with a fixed input and trades with a fixed output. Write the pool's reserves as $(x, y)$, and
+let the trade change the $y$ reserve by $\Delta$.</p>
+<ul>
+<li>In <code>outGivenIn a x y Δ</code> the trader sends $\Delta$ of the $y$ token in and receives
+$$x - \bigl(k - (y + \Delta)^a\bigr)^{1/a}. \tag{8}$$</li>
+<li>In <code>inGivenOut a x y Δ</code> the trader takes $\Delta$ of the $y$ token out and pays
+$$\bigl(k - (y - \Delta)^a\bigr)^{1/a} - x. \tag{9}$$</li>
+</ul>
+<p>In both, $k = x^a + y^a$ is computed from the reserves just before the trade, as the paper specifies
+(§4.1).</p>
+
+<!--LEAN:outGivenIn,inGivenOut-->
+
+<p>For example, in the running pool $k = \sqrt{100} + \sqrt{110} = {{k}}$. A trader who sells $10$ fyToken
+leaves the base reserve at $({{k}} - \sqrt{120})^2 = {{x1_10}}$, and so receives ${{out10}}$ base, an
+average price of ${{avg10}}$ per fyToken. That is less than the marginal price ${{price0}}$. Section 5.7
+shows that it always is.</p>
+
+<h3 id="feetrades"><span class="n">4.3</span>The four trades with fees</h3>
+
+<p>In the generic functions, $y$ is whichever reserve the trader specifies. For trades with fees we always
+call the base reserve $x$ and the fyToken reserve $y$, and each of the four possible trades uses the curve
+that matches its direction (Table 3).</p>
+
+<div class="tablewrap"><table>
+<caption>Table 3. The four trades. Trades that buy fyToken use the exponent $1 - gt$; trades that sell
+fyToken use $1 - t/g$.</caption>
+<thead><tr><th>Lean name</th><th>Trader sends</th><th>Trader receives</th><th>Exponent</th><th>Defined as</th></tr></thead>
+<tbody>
+<tr><td><code>sellFYToken</code></td><td>$\Delta$ fyToken</td><td>base</td><td>$1 - t/g$</td><td><code>outGivenIn aSell x y Δ</code></td></tr>
+<tr><td><code>buyFYToken</code></td><td>base</td><td>$\Delta$ fyToken</td><td>$1 - gt$</td><td><code>inGivenOut aBuy x y Δ</code></td></tr>
+<tr><td><code>sellBase</code></td><td>$\Delta$ base</td><td>fyToken</td><td>$1 - gt$</td><td><code>outGivenIn aBuy y x Δ</code></td></tr>
+<tr><td><code>buyBase</code></td><td>fyToken</td><td>$\Delta$ base</td><td>$1 - t/g$</td><td><code>inGivenOut aSell y x Δ</code></td></tr>
+</tbody></table></div>
+
+<p>The paper describes fees only by direction, buying or selling fyToken. It does not say which curve a
+trade uses when the trader fixes the amount of base rather than the amount of fyToken. Table 3 uses the
+curve for the trade's direction in every case.</p>
+
+<!--LEAN:Params,aBuy,aSell-->
+
+<p>The definitions of <code>aBuy</code> and <code>aSell</code> sit inside the namespace
+<code>Params</code>, where <code>p</code> stands for a value of type <code>Params</code>; <code>p.t</code> and
+<code>p.g</code> are its time and fee parameter. The fields <code>t_pos</code>, <code>g_pos</code>, <code>g_le_one</code> and <code>t_lt_g</code> are
+proofs, carried along with the numbers. Every value <code>p : Params</code> therefore comes with the facts
+$0 < t < g \le 1$, and lemmas such as <code>p.aSell_pos</code> ($0 < 1 - t/g$) are proved from them. Setting
+$g = 1$ gives the fee-free pool, <code>Params.noFee</code>.</p>
+
+<h3 id="pricedefs"><span class="n">4.4</span>Price and rate</h3>
+
+<!--LEAN:price,rate,paperRate-->
+
+<p>The relation between the two rates, $1 + \text{rate} = (1 + r)^t$, is a one-line lemma:</p>
+
+<!--LEAN:one_add_rate-->
+
+<h2 id="proofs"><span class="n">5</span>The proofs</h2>
+
+<h3 id="t1"><span class="n">5.1</span>Non-negative rates (Theorem 1)</h3>
+
+<p>A fyToken should not cost more than the base it pays out, since that would mean a negative interest
+rate. The paper's pool enforces this by checking at the end of each trade that the fyToken price is not
+above $1$, “or, equivalently, that the fyDai reserves are greater than the Dai reserves” (paper, §6.3).
+Theorem 1 is the direction of that equivalence the check relies on.</p>
+
+<div class="thm"><span class="thm-h">Theorem 1</span> (Non-negative rates).
+<span class="thm-b">If $0 < x \le y$ and $t \ge 0$, then the price $(x/y)^t$ is at most $1$, and the rates
+(4) and (5) are non-negative.</span></div>
+
+<div class="proof"><span class="proof-h">Proof.</span> Since $0 < x/y \le 1$, and a number in $[0, 1]$
+raised to a non-negative power stays in $[0, 1]$, we get $(x/y)^t \le 1$. Then $1/p - 1 \ge 0$, and
+$r = y/x - 1 \ge 0$ because $y/x \ge 1$. <span class="qed">$\square$</span></div>
+
+<p>The Lean proof of the price statement was shown in Section 3. The two rate statements are
+<code>rate_nonneg</code> and <code>paperRate_nonneg</code>.</p>
+
+<h3 id="t4"><span class="n">5.2</span>Well-defined trades (Theorem 4)</h3>
+
+<p>A trade is well defined if exactly one outcome preserves the invariant, and the pool still holds a
+positive amount of each token afterwards. Before proving this we need to know which trade sizes are
+possible.</p>
+
+<p><strong>Trades with a fixed output.</strong> Taking $\Delta$ out of the $y$ reserve is possible exactly
+when $0 \le \Delta < y$. Then $(y - \Delta)^a \le y^a$, so the quantity inside (9) satisfies</p>
+$$k - (y - \Delta)^a \;\ge\; k - y^a = x^a > 0.$$
+<p>The new $x$ reserve exists, it is positive, and it is at least $x$, so the trader pays a non-negative
+amount.</p>
+
+<p><strong>Trades with a fixed input.</strong> Here there is a limit that the constant product does not
+have. Setting $x = 0$ in $x^a + y^a = k$ shows that the curve meets the $y$ axis at $y = k^{1/a}$, as in
+Figure 1. At that point the pool has paid out all of its base, and a trader who sends in more fyToken has
+nothing left to receive. For the running pool, $k^{1/a} = {{k}}^2 = {{ymax}}$, so a single sale can bring
+in at most ${{maxsell}}$ fyToken. The exact condition for a sale of $\Delta$ is</p>
+$$(y + \Delta)^a < k, \tag{10}$$
+<p>which the project calls <code>Valid</code>.</p>
+
+<!--LEAN:Valid-->
+
+<p>A simpler sufficient condition is that the trader sends no more than the pool's reserve of the other
+token, $\Delta \le x$. It follows from the strict subadditivity of $z \mapsto z^a$ when $0 < a < 1$:</p>
+$$(x + y)^a < x^a + y^a \qquad (x, y > 0). \tag{11}$$
+<p>To prove (11), let $s = x + y$. Since $0 < x/s < 1$ and $a < 1$, we have $(x/s)^a > x/s$, that is,
+$x^a > (x/s)\, s^a$. In the same way $y^a > (y/s)\, s^a$. Adding the two inequalities gives
+$x^a + y^a > s^a$. Then, if $\Delta \le x$,</p>
+$$(y + \Delta)^a \;\le\; (y + x)^a \;<\; x^a + y^a = k.$$
+<p>For the running pool this guarantees that sales of up to $100$ fyToken are possible, while the true
+limit is ${{maxsell}}$. The bound becomes exact as $t \to 0$, where the pool trades one for one and can pay
+out at most $x$.</p>
+
+<!--LEAN:rpow_add_lt-->
+<!--LEAN:valid_of_le-->
+
+<p>The Lean proof of (11) follows the argument above. The local fact <code>key</code> is the inequality
+$x^a > (x/s)\, s^a$, proved once for any $u$ with $0 < u < s$, and then used for $u = x$ and $u = y$.</p>
+
+<div class="thm"><span class="thm-h">Theorem 4</span> (Well-defined trades).
+<span class="thm-b">Let $0 < a < 1$ and $x, y > 0$.</span>
+<ol type="a">
+<li>If $\Delta \ge 0$ and (10) holds, the payout (8) is non-negative, the new base reserve is positive, and
+the new reserves lie on the same curve. Any other payout that leaves a non-negative base reserve on the
+curve is equal to (8).</li>
+<li>If $0 \le \Delta < y$, the cost (9) is non-negative, both new reserves are positive, and the new
+reserves lie on the same curve. Any other cost that leaves a non-negative base reserve on the curve is
+equal to (9).</li>
+</ol></div>
+
+<div class="proof"><span class="proof-h">Proof.</span> Existence and positivity were shown above, and
+<code>solve_rpow</code> shows that the new reserves lie on the curve. For (a), the payout is non-negative
+because $(y + \Delta)^a \ge y^a$, so $\bigl(k - (y+\Delta)^a\bigr)^{1/a} \le (k - y^a)^{1/a} = x$.
+Uniqueness in both parts is <code>eq_solve</code>: a non-negative reserve on the curve must equal
+(7). <span class="qed">$\square$</span></div>
+
+<p>Uniqueness holds among outcomes that leave a non-negative reserve. Without that restriction the
+statement would involve Mathlib's values of $x^a$ for negative $x$ (Section 3), which have no meaning
+here.</p>
+
+<!--LEANSIG:outGivenIn_spec-->
+<!--LEAN:outGivenIn_unique-->
+<!--LEANSIG:inGivenOut_spec-->
+
+<h3 id="t2"><span class="n">5.3</span>Monotonicity (Theorem 2)</h3>
+
+<p>Buying fyToken from the pool should make it more expensive, and selling fyToken to the pool should make
+it cheaper.</p>
+
+<div class="thm"><span class="thm-h">Theorem 2</span> (Monotonicity).
+<span class="thm-b">Let $t > 0$. A trade that buys a positive amount of fyToken strictly raises the price
+$(x/y)^t$, and a trade that sells a positive amount strictly lowers it. This holds for each of the four
+trades in Table 3, on any of the curves.</span></div>
+
+<div class="proof"><span class="proof-h">Proof.</span> Buying fyToken increases $x$ and decreases $y$, so
+$x/y$ increases, and $b \mapsto b^t$ is strictly increasing on $[0, \infty)$ when $t > 0$. Selling does the
+opposite. It remains to know that a trade of positive size really moves both reserves in those directions,
+and keeps them positive. That is Theorem 4, together with its strict forms <code>outGivenIn_pos</code> and
+<code>inGivenOut_pos</code>, which say that a positive input gives a positive output.
+<span class="qed">$\square$</span></div>
+
+<p>The price in Theorem 2 is the fee-free marginal price $(x/y)^t$, while the trade itself may use any of
+the curves. The fee-adjusted marginal prices $(x/y)^{gt}$ and $(x/y)^{t/g}$ are also increasing in $x/y$,
+so the same argument applies to them.</p>
+
+<!--LEAN:price_lt_price-->
+<!--LEAN:price_lt_after_buyFY-->
+
+<p>In <code>price_lt_after_buyFY</code>, the term <code>(inGivenOut_spec ha hx hΔ.le hΔy).1</code> takes
+the first part of Theorem 4, that the cost is non-negative. <code>hΔ.le</code> turns $0 < \Delta$ into
+$0 \le \Delta$.</p>
+
+<h3 id="t6"><span class="n">5.4</span>Path independence (Theorem 6)</h3>
+
+<p>The invariant is recomputed from the reserves before every trade. One might therefore expect that
+splitting a trade into pieces changes the result. It does not. The first piece ends on the curve it
+started on, so the second piece computes the same $k$.</p>
+
+<div class="thm"><span class="thm-h">Theorem 6</span> (Path independence).
+<span class="thm-b">Let $0 < a < 1$ and $\Delta_1, \Delta_2 \ge 0$, and suppose the combined sale is
+possible: $(y + \Delta_1 + \Delta_2)^a \le k$. Selling $\Delta_1$ and then $\Delta_2$ pays the same total
+as selling $\Delta_1 + \Delta_2$ at once. The same holds for trades with a fixed output, when
+$\Delta_1 \le y$.</span></div>
+
+<div class="proof"><span class="proof-h">Proof.</span> Let $x_1 = \bigl(k - (y + \Delta_1)^a\bigr)^{1/a}$
+be the base reserve after the first sale. Then $x_1^a + (y + \Delta_1)^a = k$, so the second sale computes
+the same invariant $k$ and leaves the base reserve at
+$x_2 = \bigl(k - (y + \Delta_1 + \Delta_2)^a\bigr)^{1/a}$. The total paid is
+$(x - x_1) + (x_1 - x_2) = x - x_2$, which is (8) for a single sale of $\Delta_1 + \Delta_2$.
+<span class="qed">$\square$</span></div>
+
+<p>In the running pool, selling $4$ fyToken pays ${{split4}}$ base, and selling $6$ more then pays
+${{split6}}$. The total, ${{splitsum}}$, is the payout for selling $10$ at once.</p>
+
+<p>Since the proof works for any exponent $a$, path independence also holds on the fee curves, as long as
+the pieces go in the same direction. The paper points this out as an advantage over fees charged as a
+percentage of the amount sent in, as in Uniswap, where splitting a trade changes the total fee (paper, end
+of §5). Pieces in opposite directions use different curves. That is the round trip of Section 5.8.</p>
+
+<!--LEAN:outGivenIn_add-->
+
+<p>The Lean proof follows the informal one. <code>hk</code> shows that the intermediate reserves are valid,
+<code>hx1</code> names the intermediate base reserve, and the rewrite <code>rw [inv_solve ha hk]</code> is
+the step “the second sale computes the same $k$”.</p>
+
+<h3 id="t8"><span class="n">5.5</span>Scale invariance (Theorem 8)</h3>
+
+<p>Suppose every reserve is multiplied by $\lambda > 0$, as happens when liquidity is added in proportion
+to the existing reserves. The invariant does not scale by $\lambda$:</p>
+$$(\lambda x)^a + (\lambda y)^a = \lambda^a \left(x^a + y^a\right) = \lambda^{1-t} k.$$
+<p>Trades still scale in the simplest possible way, provided the trade size scales too.</p>
+
+<div class="thm"><span class="thm-h">Theorem 8</span> (Scale invariance).
+<span class="thm-b">Let $\lambda > 0$. Multiplying both reserves and the trade size by $\lambda$ multiplies
+the result of every trade by $\lambda$, for trades with a fixed input (when they are possible) and with a
+fixed output. The price and the rate do not change.</span></div>
+
+<div class="proof"><span class="proof-h">Proof.</span> In (7),
+$$\bigl(\lambda^a k - (\lambda z)^a\bigr)^{1/a} = \bigl(\lambda^a (k - z^a)\bigr)^{1/a} = \lambda\,(k - z^a)^{1/a}.$$
+So every reserve after the scaled trade is $\lambda$ times the corresponding reserve after the original
+trade, and so is the difference between the reserves before and after. The price depends only on
+$\lambda x / \lambda y = x / y$. <span class="qed">$\square$</span></div>
+
+<p>A pool with reserves $(1000, 1100)$ pays ${{scale100}}$ base for $100$ fyToken, ten times the
+${{out10}}$ that the pool $(100, 110)$ pays for $10$. If only the reserves are scaled and the trade size
+stays fixed, there is no relation this simple.</p>
+
+<!--LEAN:inv_smul,solve_smul-->
+<!--LEANSIG:outGivenIn_smul-->
+
+<p>The hypothesis <code>hv</code> keeps $k - (y + \Delta)^a$ non-negative. It is needed because the step
+$(\lambda^a c)^{1/a} = \lambda\, c^{1/a}$, Mathlib's <code>mul_rpow</code>, requires both factors to be
+non-negative.</p>
+
+<h3 id="coords"><span class="n">5.6</span>A change of variables</h3>
+
+<p>The remaining proofs about prices use one idea twice. Write</p>
+$$u = x^a, \qquad w = y^a.$$
+<p>In these variables the invariant $u + w = k$ is a straight line, and every trade moves along it. If a
+trade raises $w$ by $d$, it lowers $u$ by exactly $d$. The reserves themselves are recovered with</p>
+$$\psi(s) = s^{1/a},$$
+<p>which is increasing and, because $1/a > 1$, strictly convex. A sale of $\Delta$ fyToken is therefore
+described by two intervals of the same width $d$: the base interval $[u', u]$, which $u$ moves across,
+and the fyToken interval $[w, w']$, which $w$ moves across. The amounts that change hands are the increases of $\psi$ across them:</p>
+$$\text{out} = \psi(u) - \psi(u'), \qquad \Delta = \psi(w') - \psi(w). \tag{12}$$
+<p>In the running example $a = 1/2$ and $\psi(s) = s^2$. Selling $10$ fyToken moves $w$ from
+$\sqrt{110} = {{sqrt110}}$ to $\sqrt{120} = {{sqrt120}}$, so $d = {{d10}}$, and moves $u$ from $10$ down to
+${{u1_10}}$. Then $\Delta = {{sqrt120}}^2 - {{sqrt110}}^2 = 10$ and
+$\text{out} = 10^2 - {{u1_10}}^2 = {{out10}}$.</p>
+
+<figure>
+<!--FIG:coords-->
+<figcaption><span class="fig-n">Figure 2.</span> The sale of $10$ fyToken from the running pool. Left: in
+the variables $u = \sqrt{x}$ and $w = \sqrt{y}$ the invariant is the line $u + w = {{k}}$, and the trade
+moves from $P$ to $P'$. Right: $\psi(s) = s^2$ turns the two intervals of width $d = {{d10}}$ into the
+amounts traded. The fyToken interval lies further right, where $\psi$ is steeper, so it produces the larger
+amount.</figcaption>
+</figure>
+
+<p>Because $\psi$ is convex, its increase over an interval of fixed width is larger the further right the
+interval lies. In Figure 2 the base interval lies to the left of the fyToken interval, because $x < y$, and
+so the trader receives less base than the fyToken they send. The next two sections make this
+precise.</p>
+
+<h3 id="t7"><span class="n">5.7</span>Price impact (Theorem 7)</h3>
+
+<p>The average price of a trade is the amount of base exchanged per fyToken, $\text{out}/\Delta$ for a
+sale. The difference between the average price and the marginal price before the trade is the trade's
+price impact. We want to show that price impact always works against the trader, and grows with the size
+of the trade. In the running example, selling $10$ fyToken happens at an average price of ${{avg10}}$. That lies
+between the marginal price before the trade, ${{price0}}$, and the marginal price after it,
+$({{x1_10}}/120)^{0.5} = {{post10}}$. Figure 3 shows the same fact on the curve, for a larger sale.</p>
+
+<figure>
+<!--FIG:trade-->
+<figcaption><span class="fig-n">Figure 3.</span> A sale of $30$ fyToken from the running pool, drawn with
+the fyToken reserve on the horizontal axis so that slopes are prices in base per fyToken. The average price
+${{avg30}}$ is the slope of the chord. The marginal prices before and after the trade, ${{price0}}$ and
+${{post30}}$, are the slopes of the tangents at its ends.</figcaption>
+</figure>
+
+<div class="thm"><span class="thm-h">Theorem 7</span> (Price impact).
+<span class="thm-b">Let $0 < a < 1$ and $\tau = 1 - a$, let $x, y, \Delta > 0$, and let the sale of $\Delta$
+be possible. Then</span>
+$$\left(\frac{x - \text{out}}{y + \Delta}\right)^{\tau} \;<\; \frac{\text{out}}{\Delta} \;<\; \left(\frac{x}{y}\right)^{\tau}.$$
+<span class="thm-b">For a purchase of $\Delta < y$ the average price likewise lies strictly between the
+marginal price before the trade (now the lower bound) and the marginal price after it. The average price of
+a sale strictly decreases as the sale grows, and the average price of a purchase strictly
+increases.</span></div>
+
+<div class="proof"><p><span class="proof-h">Proof.</span> Use the variables of Section 5.6. By the mean value
+theorem there are $\xi \in (u', u)$ and $\eta \in (w, w')$ with</p>
+$$\psi(u) - \psi(u') = \psi'(\xi)\, d, \qquad \psi(w') - \psi(w) = \psi'(\eta)\, d.$$
+<p>Since $\psi'(s) = \tfrac{1}{a}\, s^{1/a - 1}$, dividing the first equation by the second and using (12)
+gives</p>
+$$\frac{\text{out}}{\Delta} = \left(\frac{\xi}{\eta}\right)^{1/a - 1}. \tag{13}$$
+<p>The marginal prices can be written in the same variables. Since $x = u^{1/a}$, $y = w^{1/a}$ and
+$\tau / a = 1/a - 1$,</p>
+$$\left(\frac{x}{y}\right)^{\tau} = \left(\frac{u}{w}\right)^{1/a - 1},$$
+<p>and likewise the marginal price after the trade is $(u'/w')^{1/a - 1}$. Now $u' < \xi < u$ and
+$w < \eta < w'$ give</p>
+$$\frac{u'}{w'} \;<\; \frac{\xi}{\eta} \;<\; \frac{u}{w},$$
+<p>and raising to the positive power $1/a - 1$ gives the inequalities for a sale.</p>
+<p>A purchase is a sale run backwards. Buying $\Delta$ from $(x, y)$ ends at $(x + \text{in}, y - \Delta)$,
+and selling $\Delta$ from there returns to $(x, y)$ and pays exactly $\text{in}$ (the lemma
+<code>outGivenIn_reverse</code>). Applying the result for sales at the later reserves gives the result for
+purchases.</p>
+<p>For the last claim, take $0 < \Delta_1 < \Delta_2$, and use Theorem 6 to split the larger sale into
+$\Delta_1$ followed by $\Delta_2 - \Delta_1$. The second piece starts where the first one ends. By what we
+just proved, its average price is below the marginal price at that point, which is below the average price
+of the first piece. The average price of the whole sale is a weighted average of the two pieces' average
+prices, so it is below that of the first piece alone. The argument for purchases is the same.
+<span class="qed">$\square$</span></div>
+
+<figure>
+<!--FIG:impact-->
+<figcaption><span class="fig-n">Figure 4.</span> Prices for a sale of $\Delta$ fyToken from the running
+pool, for $\Delta$ from $0$ to $150$. The average price (green) starts at the marginal price before the
+trade and stays strictly between it and the marginal price after the trade. The dot marks the sale of $10$
+used in the text.</figcaption>
+</figure>
+
+<p>For a purchase from the running pool the order is reversed. Buying $5$ fyToken costs ${{buy5}}$ base,
+an average price of ${{buy5avg}}$, between ${{price0}}$ before the trade and ${{buy5post}}$ after it.</p>
+
+<p>Mathlib's mean value theorem, <code>exists_hasDerivAt_eq_slope</code>, needs the function to be
+continuous on the closed interval and differentiable inside it. The lemma
+<code>hasDerivAt_rpow_const</code> supplies the derivative $p\, z^{p - 1}$ of $z \mapsto z^p$.</p>
+
+<!--LEAN:mvt_rpow-->
+<!--LEANSIG:avgPrice_outGivenIn-->
+<!--LEANSIG:avgPrice_outGivenIn_strictAnti-->
+
+<p>On the fee curves, $\tau$ is $gt$ or $t/g$, so the prices that bracket the average are the fee-adjusted
+marginal prices. The fee-free versions, <code>avgPrice_sellFY_noFee</code> and
+<code>avgPrice_buyFY_noFee</code>, state the result with <code>price t</code>.</p>
+
+<h3 id="t3"><span class="n">5.8</span>Round trips (Theorem 3)</h3>
+
+<p>Suppose a trader sells $\Delta$ fyToken and then immediately buys $\Delta$ fyToken back. Without a fee
+both trades use the same curve, and the trader should end where they started. With a fee, the sale uses the
+curve with exponent $\alpha = 1 - t/g$, which we call the $\alpha$-curve, and the purchase uses the curve
+with exponent $\beta = 1 - gt$, the $\beta$-curve. When $g < 1$, $\alpha < \beta$. We want the fee to make
+every round trip cost the trader something.</p>
+
+<div class="thm"><span class="thm-h">Theorem 3</span> (No free round trips).
+<ol type="a">
+<li>Without a fee, a round trip breaks even: buying $\Delta$ back costs exactly what selling $\Delta$
+paid.</li>
+<li>Let $g < 1$, $0 < x \le y$ and $\Delta > 0$, and let the sale be possible. Then buying $\Delta$ back
+costs strictly more than selling $\Delta$ paid.</li>
+</ol></div>
+
+<p>Part (b) needs the hypothesis $x \le y$, and without it the statement is false. We return to this after
+the proof.</p>
+
+<div class="proof"><p><span class="proof-h">Proof.</span> (a) The sale leaves reserves $(x_1, y + \Delta)$ on
+the curve through $(x, y)$. Buying $\Delta$ back on the same curve leads to the point of that curve with
+fyToken reserve $y$, and by the uniqueness in Theorem 4 that point is $(x, y)$. So the purchase costs
+$x - x_1$, which is what the sale paid.</p>
+
+<p>(b) The sale leaves reserves $(x_1, y + \Delta)$ on the $\alpha$-curve. Use the variables of Section 5.6
+with the exponent $\alpha$:</p>
+$$u' = x_1^{\alpha}, \quad u = x^{\alpha}, \quad w = y^{\alpha}, \quad w' = (y + \Delta)^{\alpha}.$$
+<p>As before, $[u', u]$ and $[w, w']$ have the same width. The purchase uses the $\beta$-curve through
+$(x_1, y + \Delta)$, and ends at a point $(x_2, y)$ with
+$x_2^{\beta} + y^{\beta} = x_1^{\beta} + (y + \Delta)^{\beta}$. It costs $x_2 - x_1$, and the sale paid
+$x - x_1$, so the purchase costs more exactly when $x_2 > x$. That is the inequality</p>
+$$x^{\beta} - x_1^{\beta} \;<\; (y + \Delta)^{\beta} - y^{\beta}. \tag{14}$$
+<p>Write each $\beta$-power through an $\alpha$-power, $z^{\beta} = (z^{\alpha})^{\beta/\alpha}$, and let
+$\varphi(s) = s^{\beta/\alpha}$. Then (14) reads</p>
+$$\varphi(u) - \varphi(u') \;<\; \varphi(w') - \varphi(w).$$
+<p>Since $\beta/\alpha > 1$, $\varphi$ is strictly convex, so its increase over an interval of fixed width
+grows as the interval moves right. The two intervals have the same width, and $u' < u \le w$ because
+$x_1 < x \le y$. So the inequality holds. <span class="qed">$\square$</span></div>
+
+<p>In the running pool with $g = 0.95$, selling $10$ fyToken pays ${{rt_sell}}$ base and buying $10$ back
+costs ${{rt_buy}}$. The trader loses ${{rt_loss}}$.</p>
+
+<p><strong>Where the hypothesis comes from.</strong> The argument used only that the base interval
+$[u', u]$ lies to the left of the fyToken interval $[w, w']$, that is, $x_1 < y$. If instead $x_1 > y$, the
+base interval lies to the right, the inequality reverses, and the round trip pays the trader. When
+$x_1 = y$ the two intervals coincide and the round trip breaks even. Figure 5 shows this for $y = 100$,
+$\Delta = 10$, $t = 0.5$ and $g = 0.95$. The trader's result changes sign at exactly $x = 110$, where the
+sale leaves $x_1 = 100 = y$. For example, starting from $(x, y) = (200, 100)$ the sale pays
+${{rt2_sell}}$ and buying back costs ${{rt2_buy}}$, a gain of ${{rt2_gain}}$.</p>
+
+<figure>
+<!--FIG:roundtrip-->
+<figcaption><span class="fig-n">Figure 5.</span> Cost of buying $10$ fyToken back minus the proceeds of
+selling them, with $y = 100$, $t = 0.5$ and $g = 0.95$. The result is positive (the trader loses) for
+$x < 110$, and negative for $x > 110$. At $x = 110$ the sale leaves $x_1 = y$. The shaded region contains the
+case $x \le y$ covered by Theorem 3.</figcaption>
+</figure>
+
+<p>This agrees with a remark in the paper (Appendix E): when the interest rate is negative, that is,
+$x > y$, the fee benefits the trader rather than the pool. The paper notes that such reserves can arise if
+someone sends base tokens directly to the pool. The Lean theorem assumes $x \le y$, which implies
+$x_1 < y$. Only this direction is formalized.</p>
+
+<p>The convexity step uses Mathlib's <code>StrictConvexOn.slope_strict_mono_adjacent</code>: for a strictly
+convex function and points $p < q < r$, the slope over $[p, q]$ is less than the slope over $[q, r]$. When
+the intervals touch ($u = w$) one application suffices. When they are apart, two applications compare
+$[u', u]$ with $[u, w]$, and then $[u, w]$ with $[w, w']$.</p>
+
+<!--LEAN:roundTrip_eq-->
+<!--LEAN:increment_lt-->
+<!--LEAN:roundTrip_lt-->
+
+<p>In <code>roundTrip_lt</code>, <code>hconv</code> is the convexity of $\varphi$, <code>hpow</code> is
+the identity $(z^{\alpha})^{\beta/\alpha} = z^{\beta}$, <code>hlen</code> says the two intervals have the
+same width, and <code>hinc</code> is (14) before the change of variables is undone. The theorem about the
+fee trades is then a direct application:</p>
+
+<!--LEAN:Params.roundTrip_loss-->
+
+<h3 id="t5"><span class="n">5.9</span>Convergence at maturity (Theorem 5)</h3>
+
+<p>At maturity a fyToken is worth exactly one unit of base, so the pool should trade one for one. Every
+exponent in use, $1 - t$, $1 - gt$ and $1 - t/g$, tends to $1$ as $t \to 0$, and at exponent $1$ the
+invariant is the constant sum $x + y = k$.</p>
+
+<div class="thm"><span class="thm-h">Theorem 5</span> (Convergence at maturity).
+<span class="thm-b">Fix reserves $x, y$ and a trade size $\Delta$. As $t \to 0$:</span>
+<ol type="a">
+<li>for each $z$, the point of the curve through $(x, y)$ with fyToken reserve $z$ has a base reserve that
+tends to $x + y - z$, the value on the constant-sum line;</li>
+<li>the result of each of the four trades in Table 3 tends to $\Delta$;</li>
+<li>the price $(x/y)^t$ tends to $1$.</li>
+</ol></div>
+
+<div class="proof"><span class="proof-h">Proof.</span> For (a) it suffices to show that
+$a \mapsto (x^a + y^a - z^a)^{1/a}$ is continuous at $a = 1$, because then its limit is its value there,
+$x + y - z$. Each $a \mapsto c^a$ is continuous at $a = 1$, so is $a \mapsto 1/a$, and
+$(b, e) \mapsto b^e$ is continuous at every point where $e > 0$. At $a = 1$ the exponent $1/a$ is $1$, so the
+pieces combine. Each trade result is $x$ minus such a value, or such a value minus $x$, which gives (b).
+For (c), $t \mapsto (x/y)^t$ is continuous and equals $1$ at $t = 0$.
+<span class="qed">$\square$</span></div>
+
+<div class="tablewrap"><table class="narrow">
+<caption>Table 4. Base received for selling $10$ fyToken into the running pool.</caption>
+<thead><tr><th class="num">$t$</th><th class="num">No fee</th><th class="num">$g = 0.95$</th></tr></thead>
+<tbody>
+<tr><td class="num">0.5</td><td class="num">{{mat_nf_05}}</td><td class="num">{{mat_f_05}}</td></tr>
+<tr><td class="num">0.25</td><td class="num">{{mat_nf_025}}</td><td class="num">{{mat_f_025}}</td></tr>
+<tr><td class="num">0.1</td><td class="num">{{mat_nf_01}}</td><td class="num">{{mat_f_01}}</td></tr>
+<tr><td class="num">0.01</td><td class="num">{{mat_nf_001}}</td><td class="num">{{mat_f_001}}</td></tr>
+</tbody></table></div>
+
+<figure>
+<!--FIG:maturity-->
+<figcaption><span class="fig-n">Figure 6.</span> Base received for selling $10$ fyToken into the running
+pool, as a function of the time to maturity. Both the fee-free payout and the payout with $g = 0.95$
+approach $10$ as $t \to 0$.</figcaption>
+</figure>
+
+<p>In Mathlib, limits are written with filters. <code>Tendsto f (𝓝 1) (𝓝 L)</code> means that
+$f(a) \to L$ as $a \to 1$, where <code>𝓝 1</code> stands for the neighborhoods of $1$. The project proves
+continuity in the exponent once, and then composes it with any path of exponents <code>e</code> that tends
+to $1$, along any filter <code>l</code>. The same lemma therefore gives the fee-free result and the results
+with fees.</p>
+
+<!--LEAN:tendsto_solve_one-->
+<!--LEANSIG:tendsto_curve-->
+<!--LEANSIG:tendsto_feeTrades-->
+
+<p>Mathlib's lemma <code>ContinuousAt.rpow</code> requires either a nonzero base or a positive exponent.
+At $a = 1$ the exponent is positive, so no hypothesis on the reserves is needed. The convergence is
+pointwise: it holds for each fixed trade, and is not claimed to be uniform over all trades.</p>
+
+<h2 id="differences"><span class="n">6</span>Where the formalization and the paper differ</h2>
+
+<p>Writing each property precisely enough for Lean to check it raised the following points.</p>
+
+<h4>Two notions of rate</h4>
+<p>The paper's rate, $r = y/x - 1$ in (5), is a rate per unit of scaled time; with $t = 1$ at four years it
+is a four-year rate. The return to maturity, $(y/x)^t - 1$ in (4), is a different number. Both are
+defined in the project, and <code>one_add_rate</code> relates them.</p>
+
+<h4>Round trips at negative rates</h4>
+<p>“A round trip with a fee loses money” holds when $x \le y$, and fails when the sale leaves more base
+than the pool's starting fyToken (Section 5.8, Figure 5). The paper mentions this for negative rates in
+Appendix E. Theorem 3 carries the hypothesis $x \le y$.</p>
+
+<h4>A limit on trades with a fixed input</h4>
+<p>The constant power sum curve meets both axes, so a sale of fyToken is possible only while
+$(y + \Delta)^{1-t} < k$ (Section 5.2). The constant product has no such limit, and the paper does not
+discuss it. A sale of at most $x$ fyToken is always possible.</p>
+
+<h4>The worked example in §6.3</h4>
+<p>The paper's example sells $100$ fyDai into a pool with $100$ Dai and $100$ virtual fyDai, at
+$t = 0.5$ with $g = 0.95$, and reports $x = 34.31$, so that ${{paper_nofee}}$ Dai is paid out. That is the
+result on the fee-free curve, exponent $0.5$. On the selling curve the text describes, exponent
+$1 - t/g = {{a_sell}}$, the base reserve becomes ${{paper_fee_x}}$ and the payout is ${{paper_fee}}$ Dai.</p>
+
+<h4>Path independence with fees</h4>
+<p>The paper's remark that splitting a trade does not change the fee paid (end of §5) is proved here
+(Theorem 6) for pieces in the same direction. Pieces in opposite directions form a round trip, which is
+covered by Theorem 3.</p>
+
+<h4>Which curve each trade uses</h4>
+<p>The paper assigns curves by direction, buying or selling fyToken. Table 3 extends this to trades where
+the trader fixes the amount of base.</p>
+
+<h4>What is not formalized</h4>
+<p>Liquidity tokens and the accounting for virtual reserves (paper §6), the proofs about the share
+invariant (Appendices E and F), and the limit $t \to 1$ (Appendix D). In this project $y$ is simply the
+fyToken reserve used in the formula, virtual reserves included.</p>
+
+<h2 id="appendix"><span class="n">A</span>Building the project</h2>
+
+<p>The project needs <code>elan</code>, Lean's toolchain manager. Mathlib's compiled files are downloaded
+rather than built locally.</p>
+
+<pre class="sh"><code>lake exe cache get             # download compiled Mathlib
+lake build                     # check every proof
+lake env lean AxiomCheck.lean  # list the axioms behind each main theorem
+python3 site/build.py          # rebuild this page from the Lean sources</code></pre>
+
+<div class="tablewrap"><table>
+<caption>Table 5. Source files.</caption>
+<thead><tr><th>File</th><th>Contents</th></tr></thead>
+<tbody>
+<tr><td><code>YieldSpace/Defs.lean</code></td><td>Invariant, trades, price, rates, fee parameters</td></tr>
+<tr><td><code>YieldSpace/Rates.lean</code></td><td>Theorem 1 and the relation between the rates</td></tr>
+<tr><td><code>YieldSpace/Trades.lean</code></td><td>Lemmas about <code>solve</code>; Theorems 4, 6 and 8</td></tr>
+<tr><td><code>YieldSpace/Monotone.lean</code></td><td>Bounds on the fee exponents; Theorems 2 and 3</td></tr>
+<tr><td><code>YieldSpace/PriceImpact.lean</code></td><td>Theorem 7</td></tr>
+<tr><td><code>YieldSpace/Maturity.lean</code></td><td>Theorem 5</td></tr>
+<tr><td><code>AxiomCheck.lean</code></td><td><code>#print axioms</code> for each main theorem</td></tr>
+</tbody></table></div>
+
+<h2 id="references"><span class="n">B</span>References</h2>
+<ol class="refs">
+<li>[1] Allan Niemerg, Dan Robinson and Lev Livnev. <em>YieldSpace: An Automated Liquidity Provider for
+Fixed Yield Tokens.</em> Working draft, August 2020. <a href="https://yield.is/YieldSpace.pdf">yield.is/YieldSpace.pdf</a></li>
+<li>[2] Leonardo de Moura and Sebastian Ullrich. <em>The Lean 4 Theorem Prover and Programming
+Language.</em> CADE-28, 2021.</li>
+<li>[3] The mathlib Community. <em>The Lean Mathematical Library.</em> CPP 2020.</li>
+</ol>
+
+</main>
