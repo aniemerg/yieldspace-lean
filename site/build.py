@@ -66,6 +66,9 @@ def numbers():
     n["sqrt120"] = f"{(Y0 + 10) ** 0.5:.3f}"
     n["d10"] = f"{(Y0 + 10) ** 0.5 - Y0 ** 0.5:.3f}"
     n["u1_10"] = f"{(X0 - o10) ** 0.5:.3f}"
+    o120 = out_given_in(A, X0, Y0, 120)
+    n["avg120"] = f"{o120 / 120:.3f}"
+    n["post120"] = f"{((X0 - o120) / (Y0 + 120)) ** T:.3f}"
     o30 = out_given_in(A, X0, Y0, 30)
     n["out30"] = f"{o30:.2f}"
     n["avg30"] = f"{o30 / 30:.3f}"
@@ -279,7 +282,7 @@ def fig_trade():
     p.dot(ya, xa)
     p.dot(yb, xb)
     p.text(ya, xa, "before", dx=10, dy=-8)
-    p.text(yb, xb, "after", dx=-4, dy=24, anchor="middle")
+    p.text(yb, xb, "after", dx=-10, dy=22, anchor="end")
     p.text(ya + 45, xa - 45 * sa, f"tangent, slope −{sa:.3f}", "lbl t1", dx=-6, dy=20, anchor="middle")
     ym = (ya + yb) / 2
     p.text(ym, (xa + xb) / 2, f"chord, slope −{(xa - xb) / 120:.3f}", "lbl t3", dx=8, dy=-12)
